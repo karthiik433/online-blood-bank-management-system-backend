@@ -4,9 +4,25 @@ const bodyParser = require("body-parser");
 const port = 9999;
 app.use(express.urlencoded());
 const bcrypt = require("bcrypt");
+const session = require("express-session");
+
+const session_secret = "karthi";
 
  const cors = require("cors");
- app.use(cors());
+ app.use(cors({
+ 
+    credentials :true,
+    origin:"http://localhost:8080"
+
+ }));
+
+// add a property called session to the req
+ app.use(session({
+     secret : session_secret,
+    //  cookie:{
+    //      maxAge:1*60*60*60*1000
+    //  }
+ }))
 
 const {Schema} = require("mongoose");
 const { stringify } = require("querystring");
@@ -16,6 +32,7 @@ const { stringify } = require("querystring");
 app.use(express.json());
 
 const {bloodBankModel,donorModel,userModel} = require("./createDataBase");
+const { resolveSoa } = require("dns");
 
 
 
@@ -53,21 +70,24 @@ const SALT = 5 ;
 
 app.post("/signup",async (req,res)=>{
     const {userName,password} = req.body;
+    console.log(req.body,"signUp");
     const existingUser = await userModel.findOne({userName});
     if(isNullOrUndefined(existingUser)){
         //allow signup
         const hashedPwd = bcrypt.hashSync(password,SALT);
         const newUser =  new userModel({userName,password:hashedPwd});
         await newUser.save();
+        req.session.userId = newUser._id;
         res.status(201).send({Success:"Signed Up Successfully"});
     }else{
-        res.status(400).send({err:`UserName ${userName} already exists.Please choose another.`});
+        res.status(400).send({error:`UserName ${userName} already exists.Please choose another.`});
     }
 });
 
 
 app.post("/login",async (req,res)=>{
     const {userName,password} = req.body;
+    console.log(req.body,"login");
     const existingUser = await userModel.findOne({userName});
     //console.log(existingUser);
     if(isNullOrUndefined(existingUser)){
@@ -75,35 +95,48 @@ app.post("/login",async (req,res)=>{
     }else{
         const hashedPwd = existingUser.password;
         if(bcrypt.compareSync(password,hashedPwd)){
-            res.status(200).send({success:"Logged in successfully"});
+            req.session.userId = existingUser._id;
+            let donor = await donorModel.findOne({fullName:userName});
+            if(isNullOrUndefined(donor)){
+                res.status(200).send({success:"Logged in successfully",donor:false});
+            }else{
+                res.status(200).send({success:"Logged in successfully",donor:true});
+            }
+            //console.log("logged");
+            
         }
         else{
-            res.status(401).send({err:"Password incorect."});
+            res.status(401).send({error:"Password incorect."});
         }
     }
 });
 
 const AuthMiddleware = async(req,res,next)=>{
-    const userName = req.headers["x-username"];
-    const password = req.headers["x-password"];
-    if(isNullOrUndefined(userName)|| isNullOrUndefined(password)){
-        res.status(401).send({error : "userName/Password incorrect."});
+    // const userName = req.headers["x-username"];
+    // const password = req.headers["x-password"];
+                         //userName                       password
+    if(isNullOrUndefined(req.session)|| isNullOrUndefined(req.session.userId)){
+        res.status(401).send({error : "Not Logged in"});
     }else{
-        const existingUser = await userModel.findOne({
-            userName,
-        });
-        if(isNullOrUndefined(existingUser)){
-            res.status(401).send({error:"User doesn't exist" });
 
-        }else{
-            const hashedPwd = existingUser.password;
-            if(bcrypt.compareSync(password,hashedPwd)){
-                req.user = existingUser;
-                next();
-            }else{
-               res.status(401).send({err:"Password incorrect"});
-            }
-        }
+         next();
+       
+
+        // const existingUser = await userModel.findOne({
+        //     userName,
+        // });
+        // if(isNullOrUndefined(existingUser)){
+        //     res.status(401).send({error:"User doesn't exist" });
+
+        // }else{
+        //     const hashedPwd = existingUser.password;
+        //     if(bcrypt.compareSync(password,hashedPwd)){
+        //         req.user = existingUser;
+        //         next();
+        //     }else{
+        //        res.status(401).send({err:"Password incorrect"});
+        //     }
+        // }
     }
 };
 
@@ -187,24 +220,24 @@ app.post("/donorRegistration",AuthMiddleware,async (req,res)=>{
 app.put("/updateDonorDetails",AuthMiddleware,async (req,res)=>{
     const details = req.body;
     console.log(req.body);
-    console.log(details.fullName,details.password);
-    if(isNullOrUndefined(details.fullName) || isNullOrUndefined(details.password)){
+    console.log(details.fullName);//,password:details.password
+    if(isNullOrUndefined(details.fullName)){
         res.status(404).send({message:"Please fill the details"});
     }else{
         //console.log(11);
-        const existingDonor = await donorModel.findOne({fullName:details.fullName,password:details.password});
+        const existingDonor = await donorModel.findOne({fullName:details.fullName});//,password:details.password
         //console.log(existingDonor);
         //console.log(existingDonor === null);
         if(isNullOrUndefined(existingDonor)){
             res.status(404).send({message:"Donor doesn't exist with given details"});
         }else{
             console.log(details);
-            if(!isNullOrUndefined(details.newName)){
-                 existingDonor.fullName = details.newName.trim();
-            }
-            if(!isNullOrUndefined(details.newpassword)){
-                existingDonor.password = details.newpassword.trim();
-            }
+            // if(!isNullOrUndefined(details.newName)){
+            //      existingDonor.fullName = details.newName.trim();
+            // }
+            // if(!isNullOrUndefined(details.newpassword)){
+            //     existingDonor.password = details.newpassword.trim();
+            // }
             if(!isNullOrUndefined(details.mobile) && details.mobile !==0){
                 existingDonor.mobile = details.mobile;
              }
@@ -230,9 +263,6 @@ app.put("/updateDonorDetails",AuthMiddleware,async (req,res)=>{
 app.delete("/deleteDonor", AuthMiddleware , async (req,res)=>{
     const details = req.body;
     console.log(details);
-    if(isNullOrUndefined(details.fullName) || isNullOrUndefined(details.password)){
-        res.status(404).send({message:"Please enter given details"});
-    }else{
         const existingDonor = await donorModel.findOne(details);
         console.log(existingDonor);
         if(isNullOrUndefined(existingDonor)){
@@ -245,7 +275,30 @@ app.delete("/deleteDonor", AuthMiddleware , async (req,res)=>{
                 res.sendStatus(404);
             }
         }
-    }
 });
+
+app.get("/logout",(req,res)=>{
+
+    if(!isNullOrUndefined(req.session)){
+        //destroy the session
+        req.session.destroy(()=>{
+            res.sendStatus(200);
+        })
+
+    }else{
+        res.sendStatus(200);
+    }
+})
+
+app.get("/userInfo",AuthMiddleware,async (req,res)=>{
+    const user = await userModel.findById(req.session.userId);
+    const donor =  await donorModel.findOne({fullName:user.userName});
+    if(isNullOrUndefined(donor)){
+        res.send({userName:user.userName,donor:false});
+    }else{
+        res.send({userName:user.userName,donor:true});
+    }
+    
+})
 
 app.listen(port,()=>console.log("connection established"));

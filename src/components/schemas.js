@@ -9,7 +9,6 @@ const userSchema = new mongoose.Schema({
 
 const donorSchema = new mongoose.Schema({
     fullName: String,
-    password:String,
     gender:String,
     dateOfBirth:String,
     bloodGroup:String,
